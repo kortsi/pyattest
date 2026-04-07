@@ -8,6 +8,7 @@ from asn1crypto.x509 import Certificate
 
 GOOGLE_ROOT_CERTS_URL = "https://android.googleapis.com/attestation/root"
 GOOGLE_REVOCATION_STATUS_URL = "https://android.googleapis.com/attestation/status"
+_MAX_FETCH_BYTES = 10_000_000  # 10MB cap for fetch responses
 
 
 def _load_certificate(cert_bytes: bytes) -> Certificate:
@@ -72,7 +73,12 @@ def fetch_google_key_attestation_roots(
     """
     try:
         resp = urllib.request.urlopen(url, timeout=10)
-        pem_list = json.loads(resp.read())
+        data = resp.read(_MAX_FETCH_BYTES + 1)
+        if len(data) > _MAX_FETCH_BYTES:
+            raise RuntimeError(f"Response from {url} exceeds {_MAX_FETCH_BYTES} bytes")
+        pem_list = json.loads(data)
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Failed to fetch root certificates from {url}: {e}") from e
 
@@ -127,7 +133,12 @@ def fetch_google_revocation_list(
     """
     try:
         resp = urllib.request.urlopen(url, timeout=10)
-        data = json.loads(resp.read())
+        raw = resp.read(_MAX_FETCH_BYTES + 1)
+        if len(raw) > _MAX_FETCH_BYTES:
+            raise RuntimeError(f"Response from {url} exceeds {_MAX_FETCH_BYTES} bytes")
+        data = json.loads(raw)
+    except RuntimeError:
+        raise
     except Exception as e:
         raise RuntimeError(f"Failed to fetch revocation list from {url}: {e}") from e
 

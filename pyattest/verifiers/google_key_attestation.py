@@ -85,6 +85,11 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
 
+        if len(raw) > 1_000_000:
+            raise InvalidCertificateChainException(
+                f"Attestation data too large ({len(raw)} bytes, max 1MB)."
+            )
+
         try:
             cert_chain_b64 = json.loads(raw)
         except (json.JSONDecodeError, TypeError) as e:
@@ -170,8 +175,10 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
     ):
         """Reject software-backed keys.
 
-        Checks both attestation and KeyMint security levels. Google's Kotlin
-        reference implementation enforces both match and neither is Software.
+        Checks both attestation and KeyMint security levels are not Software.
+        Matching Google's Kotlin reference default (NOT_SOFTWARE): both must be
+        TEE or StrongBox, but they don't need to match each other (e.g. StrongBox
+        key attested by TEE is valid).
         """
         if attestation_level is None or attestation_level == SECURITY_LEVEL_SOFTWARE:
             raise InvalidSecurityLevelException(
@@ -192,7 +199,7 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
         """
         hw = key_description.get("hardware_enforced", {})
         origin = hw.get("origin")
-        if origin is not None and origin != 0:  # 0 = GENERATED
+        if origin != 0:  # 0 = GENERATED; missing origin is also rejected
             raise InvalidSecurityLevelException(
                 f"Key origin is {origin} (expected 0=Generated). "
                 "Key may have been imported rather than generated on-device."

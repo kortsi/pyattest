@@ -257,6 +257,32 @@ def test_securely_imported_key_rejected():
         attestation.verify()
 
 
+def test_missing_origin_rejected():
+    """Key with no origin field should be rejected."""
+    # Factory always sets origin, so we need to patch the parsed result
+    from unittest.mock import patch
+
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest, nonce, config)
+
+    # Intercept parse_key_description to remove origin from hardware_enforced
+    original_parse = __import__("pyattest.key_description", fromlist=["parse_key_description"]).parse_key_description
+
+    def patched_parse(data):
+        result = original_parse(data)
+        result["hardware_enforced"].pop("origin", None)
+        return result
+
+    with patch("pyattest.verifiers.google_key_attestation.parse_key_description", patched_parse):
+        with raises(InvalidSecurityLevelException, match="origin"):
+            attestation.verify()
+
+
 # --- APK signature digest ---
 
 

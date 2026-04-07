@@ -144,6 +144,17 @@ def test_fetch_revocation_network_error():
 # --- Adversarial inputs ---
 
 
+def test_oversized_attestation():
+    """Attestation data over 1MB should be rejected."""
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app", root_ca=root_ca_pem, production=False,
+    )
+    huge = "[" + '"AAAA",' * 300000 + '"AAAA"]'  # >1MB of JSON
+    attestation = Attestation(huge, nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
 def test_empty_attestation():
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app", root_ca=root_ca_pem, production=False,
