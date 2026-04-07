@@ -57,6 +57,7 @@ class GoogleKeyAttestationConfig(Config):
         self.production = production
         self._custom_root_ca = _load_certificate(root_ca) if root_ca else None
         self._custom_root_cas = root_cas
+        self._bundled_root_cas = None
         self.revoked_serials = revoked_serials or set()
         self.apk_signature_digests = apk_signature_digests
 
@@ -66,6 +67,7 @@ class GoogleKeyAttestationConfig(Config):
         Google hardware attestation root CAs.
 
         Priority: root_cas (pre-loaded list) > root_ca (single PEM bytes) > bundled certs.
+        Bundled certs are loaded once and cached.
 
         Use ``fetch_google_key_attestation_roots()`` from ``pyattest.verifiers.utils``
         to get an up-to-date list merged with the bundled roots.
@@ -76,8 +78,10 @@ class GoogleKeyAttestationConfig(Config):
         if self._custom_root_ca:
             return [self._custom_root_ca]
 
-        cert_dir = Path(__file__).parent / "../certificates"
-        roots = []
-        for pem_file in sorted(cert_dir.glob("google_hardware_attestation_root_*.pem")):
-            roots.append(_load_certificate(pem_file.read_bytes()))
-        return roots
+        if self._bundled_root_cas is None:
+            cert_dir = Path(__file__).parent / "../certificates"
+            self._bundled_root_cas = [
+                _load_certificate(p.read_bytes())
+                for p in sorted(cert_dir.glob("google_hardware_attestation_root_*.pem"))
+            ]
+        return self._bundled_root_cas

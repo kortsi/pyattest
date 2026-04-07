@@ -16,7 +16,10 @@ Changes from the original:
   - Extracted _explicit_tag() helper to reduce repetition
   - Removed attestation_version parameter from parse_authorization_list()
   - Simplified error handling to raise instead of log-and-continue
-  - Added debug logging at key parsing points (kept from original spirit)
+  - Added debug logging at key parsing points
+  - Added attestationIdSecondImei (tag 723) to AuthorizationList
+  - parse_attestation_application_id() returns all packages, not just the first
+  - Trailing DER bytes after KeyDescription are rejected (not just warned)
 
 The ASN.1 schema follows Google's official KeyDescription specification:
   https://developer.android.com/privacy-and-security/security-key-attestation#key_attestation_ext_schema

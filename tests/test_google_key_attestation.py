@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 
+import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.base import load_pem_x509_certificate
 from pytest import raises
@@ -14,6 +15,7 @@ from pyattest.exceptions import (
     InvalidCertificateChainException,
     InvalidNonceException,
     InvalidSecurityLevelException,
+    PyAttestException,
     RevokedCertificateException,
 )
 from pyattest.key_description import (
@@ -26,13 +28,17 @@ root_ca = load_pem_x509_certificate(
     Path("pyattest/testutils/fixtures/root_cert.pem").read_bytes()
 )
 root_ca_pem = root_ca.public_bytes(serialization.Encoding.PEM)
-nonce = os.urandom(32)
+
+
+@pytest.fixture
+def nonce():
+    return os.urandom(32)
 
 
 # --- Happy path ---
 
 
-def test_happy_path():
+def test_happy_path(nonce):
     """Valid TEE key attestation."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -49,7 +55,7 @@ def test_happy_path():
     assert data["package_name"] == "com.example.app"
 
 
-def test_happy_path_strongbox():
+def test_happy_path_strongbox(nonce):
     """Valid StrongBox key attestation."""
     attest, _ = factory.get(
         apk_package_name="com.example.app",
@@ -66,7 +72,7 @@ def test_happy_path_strongbox():
     assert attestation.data["data"]["security_level"] == "StrongBox"
 
 
-def test_happy_path_production():
+def test_happy_path_production(nonce):
     """Valid TEE attestation in production mode (checks package name)."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -81,7 +87,7 @@ def test_happy_path_production():
 # --- Security level ---
 
 
-def test_invalid_security_level():
+def test_invalid_security_level(nonce):
     """Software-backed key should be rejected."""
     attest, _ = factory.get(
         apk_package_name="com.example.app",
@@ -101,7 +107,7 @@ def test_invalid_security_level():
 # --- Nonce ---
 
 
-def test_invalid_nonce():
+def test_invalid_nonce(nonce):
     """Wrong nonce should be rejected."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -118,7 +124,7 @@ def test_invalid_nonce():
 # --- Certificate chain ---
 
 
-def test_invalid_certificate_chain():
+def test_invalid_certificate_chain(nonce):
     """Attestation without matching root CA should be rejected."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -133,7 +139,7 @@ def test_invalid_certificate_chain():
 # --- Package name ---
 
 
-def test_invalid_package_name():
+def test_invalid_package_name(nonce):
     """Wrong package name should be rejected in production mode."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -146,7 +152,7 @@ def test_invalid_package_name():
         attestation.verify()
 
 
-def test_package_name_not_checked_in_dev():
+def test_package_name_not_checked_in_dev(nonce):
     """Package name mismatch should pass in non-production mode."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -161,7 +167,7 @@ def test_package_name_not_checked_in_dev():
 # --- Revocation ---
 
 
-def test_revoked_certificate():
+def test_revoked_certificate(nonce):
     """Certificate with a revoked serial should be rejected."""
     import base64
     import json
@@ -182,7 +188,7 @@ def test_revoked_certificate():
         attestation.verify()
 
 
-def test_revocation_not_checked_when_empty():
+def test_revocation_not_checked_when_empty(nonce):
     """Revocation check should pass when revoked_serials is empty."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -198,7 +204,7 @@ def test_revocation_not_checked_when_empty():
 # --- Key origin ---
 
 
-def test_generated_key_passes():
+def test_generated_key_passes(nonce):
     """Key with origin=0 (Generated) should pass."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=0)
     config = GoogleKeyAttestationConfig(
@@ -210,9 +216,13 @@ def test_generated_key_passes():
     attestation.verify()
 
 
-def test_imported_key_rejected():
-    """Key with origin=1 (Imported) should be rejected."""
-    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=1)
+@pytest.mark.parametrize(
+    "origin,label",
+    [(1, "Imported"), (2, "Derived"), (3, "Unknown"), (4, "Securely Imported")],
+)
+def test_non_generated_key_rejected(nonce, origin, label):
+    """Keys with origin != 0 (Generated) should be rejected."""
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=origin)
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",
         root_ca=root_ca_pem,
@@ -223,33 +233,7 @@ def test_imported_key_rejected():
         attestation.verify()
 
 
-def test_derived_key_rejected():
-    """Key with origin=2 (Derived) should be rejected."""
-    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=2)
-    config = GoogleKeyAttestationConfig(
-        apk_package_name="com.example.app",
-        root_ca=root_ca_pem,
-        production=False,
-    )
-    attestation = Attestation(attest, nonce, config)
-    with raises(InvalidSecurityLevelException):
-        attestation.verify()
-
-
-def test_securely_imported_key_rejected():
-    """Key with origin=4 (Securely Imported) should be rejected."""
-    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=4)
-    config = GoogleKeyAttestationConfig(
-        apk_package_name="com.example.app",
-        root_ca=root_ca_pem,
-        production=False,
-    )
-    attestation = Attestation(attest, nonce, config)
-    with raises(InvalidSecurityLevelException):
-        attestation.verify()
-
-
-def test_missing_origin_rejected():
+def test_missing_origin_rejected(nonce):
     """Key with no origin field should be rejected."""
     # Factory always sets origin, so we need to patch the parsed result
     from unittest.mock import patch
@@ -282,7 +266,7 @@ def test_missing_origin_rejected():
 # --- APK signature digest ---
 
 
-def test_signature_digest_match():
+def test_signature_digest_match(nonce):
     """Matching signature digest should pass."""
     known_digest = bytes.fromhex("abcdef1234567890" * 4)
     attest, _ = factory.get(
@@ -300,7 +284,7 @@ def test_signature_digest_match():
     attestation.verify()
 
 
-def test_signature_digest_mismatch():
+def test_signature_digest_mismatch(nonce):
     """Wrong signature digest should be rejected."""
     known_digest = bytes.fromhex("abcdef1234567890" * 4)
     attest, _ = factory.get(
@@ -319,7 +303,7 @@ def test_signature_digest_mismatch():
         attestation.verify()
 
 
-def test_signature_digest_not_checked_when_not_configured():
+def test_signature_digest_not_checked_when_not_configured(nonce):
     """When apk_signature_digests is None, any digest should pass."""
     attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
     config = GoogleKeyAttestationConfig(
@@ -330,3 +314,108 @@ def test_signature_digest_not_checked_when_not_configured():
     )
     attestation = Attestation(attest, nonce, config)
     attestation.verify()
+
+
+# --- Adversarial inputs ---
+
+
+def test_oversized_attestation(nonce):
+    """Attestation data over 1MB should be rejected."""
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    huge = "[" + '"AAAA",' * 300000 + '"AAAA"]'  # >1MB of JSON
+    attestation = Attestation(huge, nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_empty_attestation(nonce):
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation("[]", nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_invalid_json(nonce):
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation("not json", nonce, config)
+    with raises(PyAttestException):
+        attestation.verify()
+
+
+def test_invalid_base64_in_chain(nonce):
+    import json
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(json.dumps(["not-valid-base64!!!"]), nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_truncated_der(nonce):
+    import base64, json
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    truncated = json.dumps(
+        [base64.b64encode(b"\x30\x82\x00\x10" + b"\x00" * 8).decode()]
+    )
+    attestation = Attestation(truncated, nonce, config)
+    with raises((InvalidCertificateChainException, PyAttestException, ValueError)):
+        attestation.verify()
+
+
+def test_bytes_input(nonce):
+    """Attestation data passed as bytes should work."""
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest.encode("utf-8"), nonce, config)
+    attestation.verify()
+
+
+def test_chain_too_long(nonce):
+    import json
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(json.dumps(["AAAA"] * 11), nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_json_object_not_array(nonce):
+    import json
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(json.dumps({"not": "an array"}), nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
