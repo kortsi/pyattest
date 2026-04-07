@@ -17,38 +17,28 @@ def _load_certificate(cert_bytes: bytes) -> Certificate:
     return Certificate.load(cert_bytes)
 
 
-def fetch_google_key_attestation_roots(
-    url: str = GOOGLE_ROOT_CERTS_URL,
-) -> List[Certificate]:
+def parse_google_root_certs(pem_list: list) -> List[Certificate]:
     """
-    Fetch current Google hardware attestation root certificates and merge
-    with the bundled roots, returning a deduplicated list.
+    Parse a list of PEM certificate strings, merge with bundled roots, and
+    deduplicate. Use this with your own HTTP client instead of
+    ``fetch_google_key_attestation_roots()``.
 
-    Useful for keeping root CAs up to date.
+    Args:
+        pem_list: JSON-decoded list of PEM certificate strings from
+            https://android.googleapis.com/attestation/root
 
-    Usage::
+    Usage with a custom HTTP client::
 
-        from pyattest.verifiers.utils import fetch_google_key_attestation_roots
-        from pyattest.configs.google_key_attestation import GoogleKeyAttestationConfig
+        import httpx
+        from pyattest.verifiers.utils import parse_google_root_certs
 
-        roots = fetch_google_key_attestation_roots()
-        config = GoogleKeyAttestationConfig(
-            apk_package_name='com.example.app',
-            production=True,
-            root_cas=roots,
-        )
+        resp = httpx.get("https://android.googleapis.com/attestation/root")
+        roots = parse_google_root_certs(resp.json())
     """
-    # Fetch from Google's endpoint
-    try:
-        resp = urllib.request.urlopen(url, timeout=10)
-        pem_strings = json.loads(resp.read())
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch root certificates from {url}: {e}") from e
+    if not isinstance(pem_list, list):
+        raise ValueError("Expected a list of PEM certificate strings")
 
-    if not isinstance(pem_strings, list):
-        raise RuntimeError(f"Unexpected response format from {url}: expected JSON array")
-
-    fetched = [_load_certificate(p.encode()) for p in pem_strings]
+    fetched = [_load_certificate(p.encode()) for p in pem_list]
 
     # Load bundled roots
     cert_dir = Path(__file__).parent / "../certificates"
@@ -69,6 +59,57 @@ def fetch_google_key_attestation_roots(
     return merged
 
 
+def fetch_google_key_attestation_roots(
+    url: str = GOOGLE_ROOT_CERTS_URL,
+) -> List[Certificate]:
+    """
+    Fetch current Google hardware attestation root certificates and merge
+    with the bundled roots, returning a deduplicated list.
+
+    Convenience wrapper around ``parse_google_root_certs()`` that handles
+    the HTTP fetch. Use ``parse_google_root_certs()`` directly if you need
+    a custom HTTP client or async fetching.
+    """
+    try:
+        resp = urllib.request.urlopen(url, timeout=10)
+        pem_list = json.loads(resp.read())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch root certificates from {url}: {e}") from e
+
+    return parse_google_root_certs(pem_list)
+
+
+def parse_google_revocation_list(data: dict) -> set:
+    """
+    Parse Google's revocation status response into a set of revoked serial
+    numbers as hex strings. Use this with your own HTTP client instead of
+    ``fetch_google_revocation_list()``.
+
+    Args:
+        data: JSON-decoded dict from
+            https://android.googleapis.com/attestation/status
+
+    Usage with a custom HTTP client::
+
+        import httpx
+        from pyattest.verifiers.utils import parse_google_revocation_list
+
+        resp = httpx.get("https://android.googleapis.com/attestation/status")
+        revoked = parse_google_revocation_list(resp.json())
+    """
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, dict):
+        raise ValueError("Expected a dict with an 'entries' key")
+
+    # Serial numbers in Google's API are hex strings without 0x prefix.
+    # Lookup in the verifier uses format(cert.serial_number, "x").
+    return {
+        serial
+        for serial, info in entries.items()
+        if isinstance(info, dict) and info.get("status") == "REVOKED"
+    }
+
+
 def fetch_google_revocation_list(
     url: str = GOOGLE_REVOCATION_STATUS_URL,
 ) -> set:
@@ -78,18 +119,11 @@ def fetch_google_revocation_list(
     Returns a set of revoked certificate serial numbers as hex strings
     (without 0x prefix), matching Google's API format.
 
+    Convenience wrapper around ``parse_google_revocation_list()`` that handles
+    the HTTP fetch. Use ``parse_google_revocation_list()`` directly if you need
+    a custom HTTP client or async fetching.
+
     See: https://developer.android.com/privacy-and-security/security-key-attestation#certificate_status
-
-    Usage::
-
-        from pyattest.verifiers.utils import fetch_google_revocation_list
-
-        revoked = fetch_google_revocation_list()
-        config = GoogleKeyAttestationConfig(
-            apk_package_name='com.example.app',
-            production=True,
-            revoked_serials=revoked,
-        )
     """
     try:
         resp = urllib.request.urlopen(url, timeout=10)
@@ -97,14 +131,4 @@ def fetch_google_revocation_list(
     except Exception as e:
         raise RuntimeError(f"Failed to fetch revocation list from {url}: {e}") from e
 
-    entries = data.get("entries")
-    if not isinstance(entries, dict):
-        raise RuntimeError(f"Unexpected response format from {url}: missing 'entries' dict")
-
-    # Serial numbers in Google's API are hex strings without 0x prefix.
-    # Lookup in the verifier uses format(cert.serial_number, "x").
-    return {
-        serial
-        for serial, info in entries.items()
-        if isinstance(info, dict) and info.get("status") == "REVOKED"
-    }
+    return parse_google_revocation_list(data)

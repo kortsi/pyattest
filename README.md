@@ -154,6 +154,21 @@ config = GoogleKeyAttestationConfig(
 )
 ```
 
+If you use an async HTTP client (aiohttp, httpx) or want to cache responses, use the
+parse functions directly:
+
+```python
+import httpx
+from pyattest.verifiers.utils import parse_google_root_certs, parse_google_revocation_list
+
+roots = parse_google_root_certs(
+    httpx.get("https://android.googleapis.com/attestation/root").json()
+)
+revoked = parse_google_revocation_list(
+    httpx.get("https://android.googleapis.com/attestation/status").json()
+)
+```
+
 #### Hardware-enforced properties and device identity
 
 After verification, you can inspect the hardware-enforced properties to check if the key

@@ -401,13 +401,88 @@ def test_parse_all_packages():
 # --- Fetch utility tests (mocked network) ---
 
 
-def test_fetch_roots_merges_and_deduplicates():
-    """fetch_google_key_attestation_roots should merge fetched + bundled and deduplicate."""
+def test_parse_root_certs_merges_and_deduplicates():
+    """parse_google_root_certs should merge fetched + bundled and deduplicate."""
+    from pyattest.verifiers.utils import parse_google_root_certs
+
+    # Pass a bundled cert as "fetched" — should be deduped
+    bundled_pem = Path("pyattest/certificates/google_hardware_attestation_root_rsa_2022.pem").read_text()
+    roots = parse_google_root_certs([bundled_pem])
+
+    assert len(roots) == 5  # 5 bundled, duplicate removed
+
+
+def test_parse_root_certs_adds_new():
+    """parse_google_root_certs should add a new cert not in the bundle."""
+    from pyattest.verifiers.utils import parse_google_root_certs
+    from cryptography import x509 as cx509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    import datetime
+
+    # Generate a unique self-signed cert
+    key = ec.generate_private_key(ec.SECP256R1())
+    cert = (
+        cx509.CertificateBuilder()
+        .subject_name(cx509.Name([cx509.NameAttribute(NameOID.COMMON_NAME, "Test New Root")]))
+        .issuer_name(cx509.Name([cx509.NameAttribute(NameOID.COMMON_NAME, "Test New Root")]))
+        .public_key(key.public_key())
+        .serial_number(cx509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    new_pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+    roots = parse_google_root_certs([new_pem])
+
+    assert len(roots) == 6  # 5 bundled + 1 new
+
+
+def test_parse_root_certs_not_list():
+    """parse_google_root_certs should raise on non-list input."""
+    from pyattest.verifiers.utils import parse_google_root_certs
+    with raises(ValueError, match="Expected a list"):
+        parse_google_root_certs({"not": "a list"})
+
+
+def test_parse_revocation_list():
+    """parse_google_revocation_list should return revoked serials as hex strings."""
+    from pyattest.verifiers.utils import parse_google_revocation_list
+
+    data = {
+        "entries": {
+            "abcdef1234": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
+            "1234567890": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
+            "fedcba9876": {"status": "SUSPENDED"},
+        }
+    }
+    revoked = parse_google_revocation_list(data)
+
+    assert revoked == {"abcdef1234", "1234567890"}
+    assert "fedcba9876" not in revoked
+
+
+def test_parse_revocation_list_missing_entries():
+    """parse_google_revocation_list should raise if 'entries' key is missing."""
+    from pyattest.verifiers.utils import parse_google_revocation_list
+    with raises(ValueError, match="Expected a dict"):
+        parse_google_revocation_list({"no_entries": {}})
+
+
+def test_parse_revocation_list_not_dict():
+    """parse_google_revocation_list should raise on non-dict input."""
+    from pyattest.verifiers.utils import parse_google_revocation_list
+    with raises(ValueError, match="Expected a dict"):
+        parse_google_revocation_list("not a dict")
+
+
+def test_fetch_roots_delegates_to_parse():
+    """fetch_google_key_attestation_roots should fetch and delegate to parse."""
     from unittest.mock import patch, MagicMock
     from pyattest.verifiers.utils import fetch_google_key_attestation_roots
     import json
 
-    # Read one bundled cert to use as the "fetched" response (will be deduped)
     bundled_pem = Path("pyattest/certificates/google_hardware_attestation_root_rsa_2022.pem").read_text()
     fake_response = MagicMock()
     fake_response.read.return_value = json.dumps([bundled_pem]).encode()
@@ -415,89 +490,38 @@ def test_fetch_roots_merges_and_deduplicates():
     with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
         roots = fetch_google_key_attestation_roots()
 
-    # Should have all 5 bundled roots, not 6 (the fetched one is a duplicate)
     assert len(roots) == 5
 
 
-def test_fetch_roots_bad_json():
-    """fetch_google_key_attestation_roots should raise on non-JSON response."""
-    from unittest.mock import patch, MagicMock
+def test_fetch_roots_network_error():
+    """fetch_google_key_attestation_roots should raise RuntimeError on network failure."""
+    from unittest.mock import patch
     from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+    import urllib.error
 
-    fake_response = MagicMock()
-    fake_response.read.return_value = b"not json"
-
-    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", side_effect=urllib.error.URLError("timeout")):
         with raises(RuntimeError, match="Failed to fetch"):
             fetch_google_key_attestation_roots()
 
 
-def test_fetch_roots_not_array():
-    """fetch_google_key_attestation_roots should raise if response is not a JSON array."""
-    from unittest.mock import patch, MagicMock
-    from pyattest.verifiers.utils import fetch_google_key_attestation_roots
-    import json
-
-    fake_response = MagicMock()
-    fake_response.read.return_value = json.dumps({"not": "an array"}).encode()
-
-    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
-        with raises(RuntimeError, match="expected JSON array"):
-            fetch_google_key_attestation_roots()
-
-
-def test_fetch_revocation_list():
-    """fetch_google_revocation_list should return revoked serials as hex strings."""
+def test_fetch_revocation_delegates_to_parse():
+    """fetch_google_revocation_list should fetch and delegate to parse."""
     from unittest.mock import patch, MagicMock
     from pyattest.verifiers.utils import fetch_google_revocation_list
     import json
 
-    fake_data = {
-        "entries": {
-            "abcdef1234": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
-            "1234567890": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
-            "fedcba9876": {"status": "SUSPENDED"},
-        }
-    }
+    fake_data = {"entries": {"abc123": {"status": "REVOKED"}}}
     fake_response = MagicMock()
     fake_response.read.return_value = json.dumps(fake_data).encode()
 
     with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
         revoked = fetch_google_revocation_list()
 
-    assert revoked == {"abcdef1234", "1234567890"}
-    assert "fedcba9876" not in revoked  # SUSPENDED, not REVOKED
+    assert revoked == {"abc123"}
 
 
-def test_fetch_revocation_bad_json():
-    """fetch_google_revocation_list should raise on non-JSON response."""
-    from unittest.mock import patch, MagicMock
-    from pyattest.verifiers.utils import fetch_google_revocation_list
-
-    fake_response = MagicMock()
-    fake_response.read.return_value = b"not json"
-
-    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
-        with raises(RuntimeError, match="Failed to fetch"):
-            fetch_google_revocation_list()
-
-
-def test_fetch_revocation_missing_entries():
-    """fetch_google_revocation_list should raise if 'entries' key is missing."""
-    from unittest.mock import patch, MagicMock
-    from pyattest.verifiers.utils import fetch_google_revocation_list
-    import json
-
-    fake_response = MagicMock()
-    fake_response.read.return_value = json.dumps({"no_entries": {}}).encode()
-
-    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
-        with raises(RuntimeError, match="missing 'entries'"):
-            fetch_google_revocation_list()
-
-
-def test_fetch_revocation_timeout():
-    """fetch_google_revocation_list should raise on network timeout."""
+def test_fetch_revocation_network_error():
+    """fetch_google_revocation_list should raise RuntimeError on network failure."""
     from unittest.mock import patch
     from pyattest.verifiers.utils import fetch_google_revocation_list
     import urllib.error
