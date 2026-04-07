@@ -124,6 +124,19 @@ print(data["package_name"])    # "com.example.app"
 print(data["attestation_version"])  # e.g. 300 or 400
 ```
 
+To keep root CAs up to date without waiting for a library release, use the fetch utility:
+
+```python
+from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+
+roots = fetch_google_key_attestation_roots()  # merges fetched + bundled, deduplicated
+config = GoogleKeyAttestationConfig(
+    apk_package_name='com.example.app',
+    production=True,
+    root_cas=roots,
+)
+```
+
 The verifier checks:
 1. Certificate chain validates against Google's bundled hardware attestation root CAs
 2. Attestation challenge matches the expected nonce

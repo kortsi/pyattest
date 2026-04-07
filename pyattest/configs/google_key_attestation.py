@@ -30,18 +30,26 @@ class GoogleKeyAttestationConfig(Config):
         apk_package_name: str,
         production: bool,
         root_ca: Optional[bytes] = None,
+        root_cas: Optional[List[Certificate]] = None,
     ):
         self.apk_package_name = apk_package_name
         self.production = production
         self._custom_root_ca = _load_certificate(root_ca) if root_ca else None
+        self._custom_root_cas = root_cas
 
     @property
     def root_cas(self) -> List[Certificate]:
         """
         Google hardware attestation root CAs.
 
-        Can be overwritten with a single custom root for testing.
+        Priority: root_cas (pre-loaded list) > root_ca (single PEM bytes) > bundled certs.
+
+        Use ``fetch_google_key_attestation_roots()`` from ``pyattest.verifiers.utils``
+        to get an up-to-date list merged with the bundled roots.
         """
+        if self._custom_root_cas:
+            return self._custom_root_cas
+
         if self._custom_root_ca:
             return [self._custom_root_ca]
 
