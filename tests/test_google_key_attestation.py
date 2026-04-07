@@ -12,6 +12,7 @@ from pyattest.exceptions import (
     InvalidCertificateChainException,
     InvalidNonceException,
     InvalidSecurityLevelException,
+    PyAttestException,
 )
 from pyattest.key_description import (
     SECURITY_LEVEL_SOFTWARE,
@@ -206,3 +207,86 @@ def test_parse_real_device_cert():
     assert hw.get("ec_curve") == 1
     assert hw.get("origin") == 0  # GENERATED
     assert "root_of_trust" in hw
+
+
+# --- Adversarial input tests ---
+
+
+def test_empty_attestation():
+    """Empty JSON array should raise InvalidCertificateChainException."""
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation("[]", nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_invalid_json():
+    """Non-JSON input should raise PyAttestException."""
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation("not json at all", nonce, config)
+    with raises(PyAttestException):
+        attestation.verify()
+
+
+def test_invalid_base64_in_chain():
+    """Bad base64 in cert chain should raise InvalidCertificateChainException."""
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    import json
+    bad_chain = json.dumps(["not-valid-base64!!!"])
+    attestation = Attestation(bad_chain, nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_truncated_der():
+    """Truncated DER cert should raise an exception."""
+    import base64
+    import json
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    truncated = json.dumps([base64.b64encode(b"\x30\x82\x00\x10" + b"\x00" * 8).decode()])
+    attestation = Attestation(truncated, nonce, config)
+    with raises((InvalidCertificateChainException, PyAttestException, ValueError)):
+        attestation.verify()
+
+
+def test_trailing_der_bytes():
+    """KeyDescription with trailing bytes should be rejected."""
+    from pyattest.key_description import parse_key_description
+    from pyasn1.codec.der import encoder as der_encoder
+    from pyasn1.type import univ
+
+    # Build a minimal valid KeyDescription then append garbage
+    from pyattest.key_description import KeyDescriptionSequence, SecurityLevel, AuthorizationList
+
+    key_desc = KeyDescriptionSequence()
+    key_desc.setComponentByName("attestationVersion", univ.Integer(300))
+    key_desc.setComponentByName("attestationSecurityLevel", SecurityLevel(1))
+    key_desc.setComponentByName("keyMintVersion", univ.Integer(300))
+    key_desc.setComponentByName("keyMintSecurityLevel", SecurityLevel(1))
+    key_desc.setComponentByName("attestationChallenge", univ.OctetString(b"test"))
+    key_desc.setComponentByName("uniqueId", univ.OctetString(b""))
+    key_desc.setComponentByName("softwareEnforced", AuthorizationList())
+    key_desc.setComponentByName("hardwareEnforced", AuthorizationList())
+
+    valid_der = der_encoder.encode(key_desc)
+    tampered = valid_der + b"\x00\x01\x02"
+
+    with raises(ValueError, match="Trailing data"):
+        parse_key_description(tampered)

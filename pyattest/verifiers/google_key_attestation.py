@@ -1,4 +1,5 @@
 import base64
+import hmac
 import json
 from typing import List, Optional
 
@@ -12,6 +13,7 @@ from pyattest.exceptions import (
     InvalidCertificateChainException,
     InvalidNonceException,
     InvalidSecurityLevelException,
+    PyAttestException,
 )
 from pyattest.key_description import (
     OID_KEY_ATTESTATION,
@@ -78,13 +80,35 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
 
-        cert_chain_b64 = json.loads(raw)
-        der_certs = [base64.b64decode(c) for c in cert_chain_b64]
+        try:
+            cert_chain_b64 = json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise PyAttestException(
+                "Attestation data is not valid JSON."
+            ) from e
+
+        if not isinstance(cert_chain_b64, list) or len(cert_chain_b64) == 0:
+            raise InvalidCertificateChainException(
+                "Certificate chain is empty or not a list."
+            )
+
+        try:
+            der_certs = [base64.b64decode(c) for c in cert_chain_b64]
+        except Exception as e:
+            raise InvalidCertificateChainException(
+                "Certificate chain contains invalid base64."
+            ) from e
 
         validated_chain = self.verify_certificate_chain(der_certs)
 
         # Parse KeyDescription from the leaf certificate (first in chain)
-        leaf_cert = cx509.load_der_x509_certificate(der_certs[0])
+        try:
+            leaf_cert = cx509.load_der_x509_certificate(der_certs[0])
+        except Exception as e:
+            raise InvalidCertificateChainException(
+                "Leaf certificate is not valid DER."
+            ) from e
+
         key_description = self._parse_attestation_extension(leaf_cert)
 
         return validated_chain, key_description
@@ -94,7 +118,7 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
         Validate the certificate chain against Google hardware attestation root CAs.
         """
         root_cas = self.attestation.config.root_cas
-        context = ValidationContext(extra_trust_roots=root_cas)
+        context = ValidationContext(trust_roots=root_cas)
 
         cert = _load_certificate(der_certs[0])
         intermediates = [_load_certificate(c) for c in der_certs[1:]]
@@ -110,7 +134,7 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
 
     def verify_nonce(self, challenge: Optional[bytes]):
         """Verify the attestation challenge matches the expected nonce."""
-        if challenge != self.attestation.nonce:
+        if not challenge or not hmac.compare_digest(challenge, self.attestation.nonce):
             raise InvalidNonceException
 
     def verify_security_level(self, level: Optional[int]):

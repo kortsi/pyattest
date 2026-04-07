@@ -351,6 +351,12 @@ class AuthorizationList(univ.Sequence):
             ),
         ),
         namedtype.OptionalNamedType(
+            "attestationIdSecondImei",
+            univ.OctetString().subtype(
+                explicitTag=_explicit_tag(TAG_ATTESTATION_ID_SECOND_IMEI)
+            ),
+        ),
+        namedtype.OptionalNamedType(
             "moduleHash",
             univ.OctetString().subtype(
                 explicitTag=_explicit_tag(TAG_MODULE_HASH)
@@ -542,6 +548,7 @@ def parse_authorization_list(auth_list_obj: AuthorizationList) -> dict:
         ("attestationIdMeid", "attestation_id_meid"),
         ("attestationIdManufacturer", "attestation_id_manufacturer"),
         ("attestationIdModel", "attestation_id_model"),
+        ("attestationIdSecondImei", "attestation_id_second_imei"),
     ]:
         comp = auth_list_obj.getComponentByName(asn1_name)
         if comp is not None and comp.isValue:
@@ -578,8 +585,8 @@ def parse_key_description(key_desc_bytes: bytes) -> dict:
             key_desc_bytes, asn1Spec=KeyDescriptionSequence()
         )
         if rest:
-            logger.warning(
-                "Extra bytes after KeyDescription: %d bytes", len(rest)
+            raise ValueError(
+                f"Trailing data after KeyDescription: {len(rest)} extra bytes"
             )
     except PyAsn1Error as e:
         logger.debug("Failed to decode KeyDescription: %s", e)
