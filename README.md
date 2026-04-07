@@ -86,7 +86,8 @@ The following parameters are important:
 
 - `apk_package_name`: Name of your apk package (verified in production mode from the KeyDescription extension)
 - `production`: Set to `True` to enforce package name verification
-- `root_ca`: Optional custom root CA bytes for testing (defaults to bundled Google hardware attestation roots)
+- `root_cas`: Optional custom root CA bytes for testing (defaults to bundled Google hardware attestation roots)
+- `revoked_serials`: Optional set of revoked certificate serial numbers (defaults to empty set)
 - `attest`: A JSON array of base64-encoded DER certificates (leaf first, root last)
 - `nonce`: Server-generated random bytes for freshness verification (passed to `setAttestationChallenge()` on Android)
 
@@ -124,24 +125,33 @@ print(data["package_name"])    # "com.example.app"
 print(data["attestation_version"])  # e.g. 300 or 400
 ```
 
-To keep root CAs up to date without waiting for a library release, use the fetch utility:
+The verifier checks:
+1. Certificate chain validates against Google's bundled hardware attestation root CAs (or custom roots if provided)
+2. Certificates not on Google's revocation list (if `revoked_serials` given)
+3. Attestation challenge matches the expected nonce
+4. Security level is TEE or StrongBox (software-backed keys are rejected)
+5. Package name matches (production mode only)
+
+To keep root CAs up to date and check for revoked certificates, use the fetch utilities:
 
 ```python
-from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+from pyattest.verifiers.utils import (
+    fetch_google_key_attestation_roots,
+    fetch_google_revocation_list,
+)
 
 roots = fetch_google_key_attestation_roots()  # merges fetched + bundled, deduplicated
+revoked = fetch_google_revocation_list()      # revoked keys
+
 config = GoogleKeyAttestationConfig(
     apk_package_name='com.example.app',
     production=True,
     root_cas=roots,
+    revoked_serials=revoked,
 )
 ```
 
-The verifier checks:
-1. Certificate chain validates against Google's bundled hardware attestation root CAs
-2. Attestation challenge matches the expected nonce
-3. Security level is TEE or StrongBox (software-backed keys are rejected)
-4. Package name matches (production mode only)
+#### Hardware-enforced properties and device identity
 
 After verification, you can inspect the hardware-enforced properties to check if the key
 requires user authentication (biometric or device PIN/pattern). This is cryptographic proof
@@ -202,7 +212,7 @@ for field, label in [
 #   Manufacturer: Google
 ```
 
-### Combining Play Integrity and Key Attestation
+#### Combining Play Integrity and Key Attestation
 
 Play Integrity and Key Attestation serve different purposes and should use separate
 nonces/challenges. Play Integrity proves the device and app are genuine; Key Attestation

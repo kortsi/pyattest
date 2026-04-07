@@ -13,6 +13,7 @@ from pyattest.exceptions import (
     InvalidNonceException,
     InvalidSecurityLevelException,
     PyAttestException,
+    RevokedCertificateException,
 )
 from pyattest.key_description import (
     SECURITY_LEVEL_SOFTWARE,
@@ -207,6 +208,48 @@ def test_parse_real_device_cert():
     assert hw.get("ec_curve") == 1
     assert hw.get("origin") == 0  # GENERATED
     assert "root_of_trust" in hw
+
+
+# --- Revocation tests ---
+
+
+def test_revoked_certificate():
+    """Certificate with a revoked serial should be rejected."""
+    import base64
+    import json
+
+    from cryptography.x509 import load_der_x509_certificate
+
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+
+    # Extract the leaf cert serial number from the generated attestation
+    chain = json.loads(attest)
+    leaf = load_der_x509_certificate(base64.b64decode(chain[0]))
+    revoked_serial = leaf.serial_number
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+        revoked_serials={format(revoked_serial, "x")},
+    )
+    attestation = Attestation(attest, nonce, config)
+
+    with raises(RevokedCertificateException):
+        attestation.verify()
+
+
+def test_revocation_not_checked_when_empty():
+    """Revocation check should pass when revoked_serials is empty."""
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+        revoked_serials=set(),
+    )
+    attestation = Attestation(attest, nonce, config)
+    attestation.verify()  # Should not raise
 
 
 # --- Adversarial input tests ---

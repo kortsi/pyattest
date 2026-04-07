@@ -14,6 +14,7 @@ from pyattest.exceptions import (
     InvalidNonceException,
     InvalidSecurityLevelException,
     PyAttestException,
+    RevokedCertificateException,
 )
 from pyattest.key_description import (
     OID_KEY_ATTESTATION,
@@ -40,6 +41,7 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
         3. Verify the attestation challenge matches the expected nonce
         4. Verify the security level is TEE or StrongBox (not Software)
         5. Verify the package name (if production mode)
+        6. Check certificate revocation (if revoked_serials configured)
         """
         chain, key_description = self.unpack(self.attestation.raw)
         self.verify_nonce(key_description.get("attestation_challenge"))
@@ -100,6 +102,7 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
             ) from e
 
         validated_chain = self.verify_certificate_chain(der_certs)
+        self.check_revocation(der_certs)
 
         # Parse KeyDescription from the leaf certificate (first in chain)
         try:
@@ -131,6 +134,23 @@ class GoogleKeyAttestationVerifier(AttestationVerifier):
             return validator.validate_usage({"digital_signature"})
         except (PathBuildingError, PathValidationError) as e:
             raise InvalidCertificateChainException from e
+
+    def check_revocation(self, der_certs: List[bytes]):
+        """Check if any certificate in the chain has been revoked.
+
+        Serial numbers are compared as hex strings without 0x prefix,
+        matching Google's revocation status API format.
+        """
+        revoked = self.attestation.config.revoked_serials
+        if not revoked:
+            return
+        for cert_der in der_certs:
+            cert = cx509.load_der_x509_certificate(cert_der)
+            serial_hex = format(cert.serial_number, "x")
+            if serial_hex in revoked:
+                raise RevokedCertificateException(
+                    f"Certificate with serial {serial_hex} has been revoked."
+                )
 
     def verify_nonce(self, challenge: Optional[bytes]):
         """Verify the attestation challenge matches the expected nonce."""

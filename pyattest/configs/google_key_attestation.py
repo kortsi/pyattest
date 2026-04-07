@@ -11,7 +11,7 @@ devices chain to older root generations - all 5 are needed for full compatibilit
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set, Union
 
 from asn1crypto.x509 import Certificate
 
@@ -31,11 +31,13 @@ class GoogleKeyAttestationConfig(Config):
         production: bool,
         root_ca: Optional[bytes] = None,
         root_cas: Optional[List[Certificate]] = None,
+        revoked_serials: Optional[Set[str]] = None,
     ):
         self.apk_package_name = apk_package_name
         self.production = production
         self._custom_root_ca = _load_certificate(root_ca) if root_ca else None
         self._custom_root_cas = root_cas
+        self.revoked_serials = revoked_serials or set()
 
     @property
     def root_cas(self) -> List[Certificate]:

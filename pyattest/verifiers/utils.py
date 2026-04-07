@@ -7,6 +7,7 @@ from asn1crypto import pem
 from asn1crypto.x509 import Certificate
 
 GOOGLE_ROOT_CERTS_URL = "https://android.googleapis.com/attestation/root"
+GOOGLE_REVOCATION_STATUS_URL = "https://android.googleapis.com/attestation/status"
 
 
 def _load_certificate(cert_bytes: bytes) -> Certificate:
@@ -59,3 +60,35 @@ def fetch_google_key_attestation_roots(
             merged.append(cert)
 
     return merged
+
+
+def fetch_google_revocation_list(
+    url: str = GOOGLE_REVOCATION_STATUS_URL,
+) -> set:
+    """
+    Fetch Google's certificate revocation status list.
+
+    Returns a set of revoked certificate serial numbers (as integers).
+
+    See: https://developer.android.com/privacy-and-security/security-key-attestation#certificate_status
+
+    Usage::
+
+        from pyattest.verifiers.utils import fetch_google_revocation_list
+
+        revoked = fetch_google_revocation_list()
+        config = GoogleKeyAttestationConfig(
+            apk_package_name='com.example.app',
+            production=True,
+            revoked_serials=revoked,
+        )
+    """
+    resp = urllib.request.urlopen(url)
+    data = json.loads(resp.read())
+    entries = data.get("entries", {})
+    # Serial numbers in Google's API are hex strings without 0x prefix
+    return {
+        serial
+        for serial, info in entries.items()
+        if info.get("status") == "REVOKED"
+    }

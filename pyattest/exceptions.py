@@ -60,3 +60,7 @@ class InvalidCertificateChainException(PyAttestException):
 
 class InvalidSecurityLevelException(PyAttestException):
     pass
+
+
+class RevokedCertificateException(PyAttestException):
+    pass
