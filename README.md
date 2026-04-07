@@ -12,10 +12,10 @@ pyattest is available on PyPI and can be installed via `$ python -m pip install 
 
 In its most basic form you can create a config instance, create an `Attestation` and verify it. Supported attestation types:
 
-- **Google Play Integrity API** — device and app integrity verification
-- **Google SafetyNet** (legacy) — deprecated, use Play Integrity instead
-- **Google Key Attestation** — hardware-level proof that a signing key resides in TEE or StrongBox, with package name and challenge verification
-- **Apple App Attestation** — hardware-backed app attestation for iOS
+- **Google Play Integrity API** - device and app integrity verification
+- **Google SafetyNet** (legacy) - deprecated, use Play Integrity instead
+- **Google Key Attestation** - hardware-level proof that a signing key resides in TEE or StrongBox, with package name and challenge verification
+- **Apple App Attestation** - hardware-backed app attestation for iOS
 
 ### Google Play Integrity API
 
@@ -173,7 +173,7 @@ revoked = parse_google_revocation_list(
 
 After verification, you can inspect the hardware-enforced properties to check if the key
 requires user authentication (biometric or device PIN/pattern). This is cryptographic proof
-from the secure hardware — it cannot be faked by a compromised OS.
+from the secure hardware - it cannot be faked by a compromised OS.
 
 ```python
 hw = attestation.data["data"]["hardware_enforced"]
@@ -202,7 +202,7 @@ if timeout:
 ```
 
 You can also read hardware-attested device identity fields. These are embedded by the
-device manufacturer at the factory and signed by the TEE — they cannot be faked by a
+device manufacturer at the factory and signed by the TEE - they cannot be faked by a
 compromised OS. The Android client must request this with
 `setDevicePropertiesAttestationIncluded(true)` at key generation time.
 

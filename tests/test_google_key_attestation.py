@@ -1,4 +1,4 @@
-"""Tests for GoogleKeyAttestationVerifier — verification logic."""
+"""Tests for GoogleKeyAttestationVerifier - verification logic."""
 
 import os
 from pathlib import Path
@@ -200,9 +200,7 @@ def test_revocation_not_checked_when_empty():
 
 def test_generated_key_passes():
     """Key with origin=0 (Generated) should pass."""
-    attest, _ = factory.get(
-        apk_package_name="com.example.app", nonce=nonce, origin=0
-    )
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=0)
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",
         root_ca=root_ca_pem,
@@ -214,9 +212,7 @@ def test_generated_key_passes():
 
 def test_imported_key_rejected():
     """Key with origin=1 (Imported) should be rejected."""
-    attest, _ = factory.get(
-        apk_package_name="com.example.app", nonce=nonce, origin=1
-    )
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=1)
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",
         root_ca=root_ca_pem,
@@ -229,9 +225,7 @@ def test_imported_key_rejected():
 
 def test_derived_key_rejected():
     """Key with origin=2 (Derived) should be rejected."""
-    attest, _ = factory.get(
-        apk_package_name="com.example.app", nonce=nonce, origin=2
-    )
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=2)
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",
         root_ca=root_ca_pem,
@@ -244,9 +238,7 @@ def test_derived_key_rejected():
 
 def test_securely_imported_key_rejected():
     """Key with origin=4 (Securely Imported) should be rejected."""
-    attest, _ = factory.get(
-        apk_package_name="com.example.app", nonce=nonce, origin=4
-    )
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce, origin=4)
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",
         root_ca=root_ca_pem,
@@ -271,14 +263,18 @@ def test_missing_origin_rejected():
     attestation = Attestation(attest, nonce, config)
 
     # Intercept parse_key_description to remove origin from hardware_enforced
-    original_parse = __import__("pyattest.key_description", fromlist=["parse_key_description"]).parse_key_description
+    original_parse = __import__(
+        "pyattest.key_description", fromlist=["parse_key_description"]
+    ).parse_key_description
 
     def patched_parse(data):
         result = original_parse(data)
         result["hardware_enforced"].pop("origin", None)
         return result
 
-    with patch("pyattest.verifiers.google_key_attestation.parse_key_description", patched_parse):
+    with patch(
+        "pyattest.verifiers.google_key_attestation.parse_key_description", patched_parse
+    ):
         with raises(InvalidSecurityLevelException, match="origin"):
             attestation.verify()
 

@@ -61,7 +61,10 @@ def test_blueline_tee():
 
     sw = parsed["software_enforced"]
     app_id = sw["attestation_application_id"]
-    assert app_id["package_name"] == "com.google.wireless.android.security.attestationverifier.collector"
+    assert (
+        app_id["package_name"]
+        == "com.google.wireless.android.security.attestationverifier.collector"
+    )
     assert len(app_id["packages"]) >= 1
 
     hw = parsed["hardware_enforced"]
@@ -227,10 +230,12 @@ def test_malformed_key_description():
         .sign(rk, hashes.SHA256())
     )
 
-    chain = json.dumps([
-        base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode(),
-        base64.b64encode(rc.public_bytes(serialization.Encoding.DER)).decode(),
-    ])
+    chain = json.dumps(
+        [
+            base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode(),
+            base64.b64encode(rc.public_bytes(serialization.Encoding.DER)).decode(),
+        ]
+    )
 
     config = GoogleKeyAttestationConfig(
         apk_package_name="com.example.app",

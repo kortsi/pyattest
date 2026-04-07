@@ -156,9 +156,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "rsaPublicExponent",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_RSA_PUBLIC_EXPONENT)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_RSA_PUBLIC_EXPONENT)),
         ),
         namedtype.OptionalNamedType(
             "mgfDigest",
@@ -180,9 +178,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "activeDateTime",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_ACTIVE_DATETIME)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_ACTIVE_DATETIME)),
         ),
         namedtype.OptionalNamedType(
             "originationExpireDateTime",
@@ -198,9 +194,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "usageCountLimit",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_USAGE_COUNT_LIMIT)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_USAGE_COUNT_LIMIT)),
         ),
         namedtype.OptionalNamedType(
             "noAuthRequired",
@@ -210,15 +204,11 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "userAuthType",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_USER_AUTH_TYPE)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_USER_AUTH_TYPE)),
         ),
         namedtype.OptionalNamedType(
             "authTimeout",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_AUTH_TIMEOUT)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_AUTH_TIMEOUT)),
         ),
         namedtype.OptionalNamedType(
             "allowWhileOnBody",
@@ -252,9 +242,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "creationDateTime",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_CREATION_DATETIME)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_CREATION_DATETIME)),
         ),
         namedtype.OptionalNamedType(
             "origin",
@@ -262,9 +250,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "rootOfTrust",
-            RootOfTrustAsn1().subtype(
-                explicitTag=_explicit_tag(TAG_ROOT_OF_TRUST)
-            ),
+            RootOfTrustAsn1().subtype(explicitTag=_explicit_tag(TAG_ROOT_OF_TRUST)),
         ),
         namedtype.OptionalNamedType(
             "osVersion",
@@ -272,9 +258,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "osPatchLevel",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_OS_PATCH_LEVEL)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_OS_PATCH_LEVEL)),
         ),
         namedtype.OptionalNamedType(
             "attestationApplicationId",
@@ -332,15 +316,11 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "vendorPatchLevel",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_VENDOR_PATCH_LEVEL)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_VENDOR_PATCH_LEVEL)),
         ),
         namedtype.OptionalNamedType(
             "bootPatchLevel",
-            univ.Integer().subtype(
-                explicitTag=_explicit_tag(TAG_BOOT_PATCH_LEVEL)
-            ),
+            univ.Integer().subtype(explicitTag=_explicit_tag(TAG_BOOT_PATCH_LEVEL)),
         ),
         namedtype.OptionalNamedType(
             "deviceUniqueAttestation",
@@ -358,9 +338,7 @@ class AuthorizationList(univ.Sequence):
         ),
         namedtype.OptionalNamedType(
             "moduleHash",
-            univ.OctetString().subtype(
-                explicitTag=_explicit_tag(TAG_MODULE_HASH)
-            ),
+            univ.OctetString().subtype(explicitTag=_explicit_tag(TAG_MODULE_HASH)),
         ),
     )
 
@@ -406,18 +384,14 @@ class AttestationApplicationIdSchema(univ.Sequence):
 
 def parse_attestation_application_id(app_id_bytes: bytes) -> dict:
     """Parse the DER-encoded AttestationApplicationId from tag 709."""
-    logger.debug(
-        "Parsing AttestationApplicationId: %d bytes", len(app_id_bytes)
-    )
+    logger.debug("Parsing AttestationApplicationId: %d bytes", len(app_id_bytes))
     try:
         app_id_obj, _ = der_decoder.decode(
             app_id_bytes, asn1Spec=AttestationApplicationIdSchema()
         )
     except PyAsn1Error as e:
         logger.debug("Failed to decode AttestationApplicationId: %s", e)
-        raise ValueError(
-            "Malformed AttestationApplicationId sequence."
-        ) from e
+        raise ValueError("Malformed AttestationApplicationId sequence.") from e
 
     parsed = {}
     packages = []
@@ -462,9 +436,7 @@ def _parse_root_of_trust(rot_obj: RootOfTrustAsn1) -> dict:
         parsed["verified_boot_key"] = bytes(
             rot_obj.getComponentByName("verifiedBootKey")
         ).hex()
-        parsed["device_locked"] = bool(
-            rot_obj.getComponentByName("deviceLocked")
-        )
+        parsed["device_locked"] = bool(rot_obj.getComponentByName("deviceLocked"))
         parsed["verified_boot_state"] = int(
             rot_obj.getComponentByName("verifiedBootState")
         )
@@ -535,8 +507,8 @@ def parse_authorization_list(auth_list_obj: AuthorizationList) -> dict:
     app_id_comp = auth_list_obj.getComponentByName("attestationApplicationId")
     if app_id_comp is not None and app_id_comp.isValue:
         try:
-            parsed["attestation_application_id"] = (
-                parse_attestation_application_id(bytes(app_id_comp))
+            parsed["attestation_application_id"] = parse_attestation_application_id(
+                bytes(app_id_comp)
             )
         except ValueError as e:
             logger.warning("Failed to parse AttestationApplicationId: %s", e)

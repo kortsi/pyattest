@@ -45,14 +45,18 @@ def _build_attestation_app_id_der(
 ) -> bytes:
     """Build DER-encoded AttestationApplicationId with the given package name."""
     pkg_info = AttestationPackageInfo()
-    pkg_info.setComponentByName("packageName", univ.OctetString(package_name.encode("utf-8")))
+    pkg_info.setComponentByName(
+        "packageName", univ.OctetString(package_name.encode("utf-8"))
+    )
     pkg_info.setComponentByName("version", univ.Integer(1))
 
     pkg_set = univ.SetOf(componentType=AttestationPackageInfo())
     pkg_set.setComponentByPosition(0, pkg_info)
 
     sig_set = univ.SetOf(componentType=univ.OctetString())
-    sig_set.setComponentByPosition(0, univ.OctetString(signature_digest or os.urandom(32)))
+    sig_set.setComponentByPosition(
+        0, univ.OctetString(signature_digest or os.urandom(32))
+    )
 
     app_id = AttestationApplicationIdSchema()
     app_id.setComponentByName("packageInfos", pkg_set)
@@ -71,7 +75,9 @@ def _build_key_description_der(
     """Build DER-encoded KeyDescription extension value."""
     key_desc = KeyDescriptionSequence()
     key_desc.setComponentByName("attestationVersion", univ.Integer(300))
-    key_desc.setComponentByName("attestationSecurityLevel", SecurityLevel(security_level))
+    key_desc.setComponentByName(
+        "attestationSecurityLevel", SecurityLevel(security_level)
+    )
     key_desc.setComponentByName("keyMintVersion", univ.Integer(300))
     key_desc.setComponentByName("keyMintSecurityLevel", SecurityLevel(security_level))
     key_desc.setComponentByName("attestationChallenge", univ.OctetString(challenge))
@@ -151,9 +157,7 @@ def get(
         .public_key(leaf_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.utcnow())
-        .not_valid_after(
-            datetime.datetime.utcnow() + datetime.timedelta(days=10)
-        )
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=10))
         .add_extension(key_usage, critical=False)
         .add_extension(
             x509.UnrecognizedExtension(
@@ -169,9 +173,11 @@ def get(
     leaf_der = leaf_cert.public_bytes(serialization.Encoding.DER)
     root_der = root_cert.public_bytes(serialization.Encoding.DER)
 
-    cert_chain_json = json.dumps([
-        base64.b64encode(leaf_der).decode(),
-        base64.b64encode(root_der).decode(),
-    ])
+    cert_chain_json = json.dumps(
+        [
+            base64.b64encode(leaf_der).decode(),
+            base64.b64encode(root_der).decode(),
+        ]
+    )
 
     return cert_chain_json, None
