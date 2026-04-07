@@ -143,6 +143,65 @@ The verifier checks:
 3. Security level is TEE or StrongBox (software-backed keys are rejected)
 4. Package name matches (production mode only)
 
+After verification, you can inspect the hardware-enforced properties to check if the key
+requires user authentication (biometric or device PIN/pattern). This is cryptographic proof
+from the secure hardware — it cannot be faked by a compromised OS.
+
+```python
+hw = attestation.data["data"]["hardware_enforced"]
+
+# user_auth_type is a bitmask set by the app developer at key generation time:
+#   1 = password/PIN/pattern only
+#   2 = biometric only (fingerprint/face)
+#   3 = either (user chooses at time of use)
+# If absent, the key has no authentication requirement (noAuthRequired).
+auth_type = hw.get("user_auth_type")
+
+if auth_type is None:
+    print("Key does not require user authentication")
+elif auth_type == 1:
+    print("Key requires password/PIN/pattern only")
+elif auth_type == 2:
+    print("Key requires biometric only")
+elif auth_type == 3:
+    print("Key accepts biometric or password/PIN (user's choice)")
+
+# auth_timeout: seconds the key remains unlocked after authentication.
+# 0 or absent means the key must be authenticated on every use.
+timeout = hw.get("auth_timeout")
+if timeout:
+    print(f"Key stays unlocked for {timeout}s after authentication")
+```
+
+You can also read hardware-attested device identity fields. These are embedded by the
+device manufacturer at the factory and signed by the TEE — they cannot be faked by a
+compromised OS. The Android client must request this with
+`setDevicePropertiesAttestationIncluded(true)` at key generation time.
+
+```python
+hw = attestation.data["data"]["hardware_enforced"]
+
+for field, label in [
+    ("attestation_id_brand", "Brand"),
+    ("attestation_id_device", "Device"),
+    ("attestation_id_product", "Product"),
+    ("attestation_id_model", "Model"),
+    ("attestation_id_manufacturer", "Manufacturer"),
+    ("attestation_id_serial", "Serial"),
+    ("attestation_id_imei", "IMEI"),
+    ("attestation_id_second_imei", "Second IMEI"),
+]:
+    value = hw.get(field)
+    if value:
+        print(f"{label}: {value}")
+# Example output:
+#   Brand: google
+#   Device: mustang
+#   Product: mustang
+#   Model: Pixel 10 Pro XL
+#   Manufacturer: Google
+```
+
 ### Combining Play Integrity and Key Attestation
 
 Play Integrity and Key Attestation serve different purposes and should use separate
