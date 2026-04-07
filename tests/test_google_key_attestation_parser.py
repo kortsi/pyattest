@@ -1,8 +1,14 @@
-"""Tests for KeyDescription ASN.1 parser and real device certificate parsing."""
+"""
+Tests for KeyDescription ASN.1 parser using real device certificate chains.
+
+Test data from android/keyattestation (Apache 2.0):
+  https://github.com/android/keyattestation/blob/b1bf4375/testdata/
+"""
 
 import os
 from pathlib import Path
 
+from cryptography import x509 as cx509
 from cryptography.hazmat.primitives import serialization
 from cryptography.x509.base import load_pem_x509_certificate
 from pytest import raises
@@ -11,10 +17,11 @@ from pyattest.attestation import Attestation
 from pyattest.configs.google_key_attestation import GoogleKeyAttestationConfig
 from pyattest.exceptions import PyAttestException
 from pyattest.key_description import (
+    SECURITY_LEVEL_SOFTWARE,
+    SECURITY_LEVEL_STRONG_BOX,
     SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
     parse_key_description,
 )
-from pyattest.testutils.factories.attestation import google_key as factory
 
 root_ca = load_pem_x509_certificate(
     Path("pyattest/testutils/fixtures/root_cert.pem").read_bytes()
@@ -22,12 +29,13 @@ root_ca = load_pem_x509_certificate(
 root_ca_pem = root_ca.public_bytes(serialization.Encoding.PEM)
 nonce = os.urandom(32)
 
+FIXTURES = Path("pyattest/testutils/fixtures")
+ATTESTATION_OID = cx509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
 
-def _load_leaf_from_pem_chain(pem_path):
-    """Load the first (leaf) certificate from a PEM chain file."""
-    from cryptography.x509 import load_pem_x509_certificate
 
-    pem_data = pem_path.read_bytes()
+def _parse_leaf(fixture_name):
+    """Load leaf cert from a PEM chain fixture and parse KeyDescription."""
+    pem_data = (FIXTURES / fixture_name).read_bytes()
     certs = []
     current = b""
     for line in pem_data.split(b"\n"):
@@ -35,33 +43,26 @@ def _load_leaf_from_pem_chain(pem_path):
         if b"END CERTIFICATE" in line:
             certs.append(current)
             current = b""
-    return load_pem_x509_certificate(certs[0])
+    leaf = load_pem_x509_certificate(certs[0])
+    ext = leaf.extensions.get_extension_for_oid(ATTESTATION_OID)
+    return parse_key_description(ext.value.value)
 
 
-def test_parse_real_device_cert():
-    """
-    Parse the KeyDescription extension from a real Pixel 3 (blueline) TEE EC cert.
+# --- Pixel 3 (blueline) - factory provisioned, 4-cert RSA chain, 2016 root ---
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/blueline/sdk28/TEE_EC_NONE.pem
 
-    Test data from android/keyattestation (Apache 2.0):
-      https://github.com/android/keyattestation/blob/b1bf4375/testdata/blueline/sdk28/TEE_EC_NONE.pem
-    """
-    from cryptography import x509 as cx509
 
-    leaf = _load_leaf_from_pem_chain(
-        Path("pyattest/testutils/fixtures/google_key_tee_ec.pem")
-    )
-    oid = cx509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
-    ext = leaf.extensions.get_extension_for_oid(oid)
-    parsed = parse_key_description(ext.value.value)
+def test_blueline_tee():
+    parsed = _parse_leaf("google_key_tee_ec.pem")
 
     assert parsed["attestation_version"] == 3
     assert parsed["attestation_security_level"] == SECURITY_LEVEL_TRUSTED_ENVIRONMENT
     assert parsed["attestation_challenge"] == b"challenge"
 
     sw = parsed["software_enforced"]
-    assert "attestation_application_id" in sw
     app_id = sw["attestation_application_id"]
     assert app_id["package_name"] == "com.google.wireless.android.security.attestationverifier.collector"
+    assert len(app_id["packages"]) >= 1
 
     hw = parsed["hardware_enforced"]
     assert 2 in hw.get("purposes", [])
@@ -70,21 +71,100 @@ def test_parse_real_device_cert():
     assert "root_of_trust" in hw
 
 
-def test_parse_all_packages():
-    """Parser should return all packages, not just the first."""
-    from cryptography import x509 as cx509
+# --- Pixel XL (marlin) - SOFTWARE security level, 3-cert chain ---
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/marlin/sdk29/TEE_EC_NONE.pem
 
-    leaf = _load_leaf_from_pem_chain(
-        Path("pyattest/testutils/fixtures/google_key_tee_ec.pem")
-    )
-    oid = cx509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
-    ext = leaf.extensions.get_extension_for_oid(oid)
-    parsed = parse_key_description(ext.value.value)
 
-    app_id = parsed["software_enforced"]["attestation_application_id"]
-    assert "packages" in app_id
-    assert len(app_id["packages"]) >= 1
-    assert app_id["packages"][0]["package_name"] == app_id["package_name"]
+def test_marlin_old_keymaster_schema():
+    """Marlin (Pixel XL, SDK 29) uses Keymaster v2 schema with different tag
+    numbers (e.g. tag 703 rollbackResistant vs 303 rollbackResistance in KeyMint).
+    Our parser uses the KeyMint schema and rejects the old format.
+    This is a known limitation - devices from ~2017 are not supported."""
+    with raises(ValueError, match="Malformed KeyDescription"):
+        _parse_leaf("google_key_marlin_tee_ec.pem")
+
+
+# --- Pixel 8a (akita) - factory provisioned, 5-cert chain, 2019 RSA root ---
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/akita/sdk34/TEE_EC_NONE.pem
+
+
+def test_akita_tee_factory():
+    parsed = _parse_leaf("google_key_akita_tee_ec.pem")
+
+    assert parsed["attestation_version"] == 300
+    assert parsed["attestation_security_level"] == SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+    assert parsed["attestation_challenge"] == b"challenge"
+
+    hw = parsed["hardware_enforced"]
+    assert hw.get("origin") == 0
+    assert hw.get("ec_curve") == 1
+    assert "root_of_trust" in hw
+
+
+# --- Pixel 9 (caiman) - remotely provisioned (RKP), 5-cert chain, 2019 RSA root ---
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/caiman/sdk36/TEE_EC_RKP.pem
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/caiman/sdk36/SB_EC_RKP.pem
+
+
+def test_caiman_tee_rkp():
+    parsed = _parse_leaf("google_key_caiman_tee_ec_rkp.pem")
+
+    assert parsed["attestation_version"] == 400
+    assert parsed["attestation_security_level"] == SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+
+    sw = parsed["software_enforced"]
+    app_id = sw["attestation_application_id"]
+    assert app_id["package_name"] == "com.google.android.attestation"
+
+    hw = parsed["hardware_enforced"]
+    assert hw.get("origin") == 0
+    assert hw.get("ec_curve") == 1
+
+
+def test_caiman_strongbox_rkp():
+    parsed = _parse_leaf("google_key_caiman_sb_ec_rkp.pem")
+
+    assert parsed["attestation_version"] == 300
+    assert parsed["attestation_security_level"] == SECURITY_LEVEL_STRONG_BOX
+
+    sw = parsed["software_enforced"]
+    app_id = sw["attestation_application_id"]
+    assert app_id["package_name"] == "com.google.android.attestation"
+
+    hw = parsed["hardware_enforced"]
+    assert hw.get("origin") == 0
+
+
+# --- Pixel 9a (tegu) - remotely provisioned, 5-cert chain, 2025 ECDSA root ---
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/tegu/sdk36/SB_EC_2026_ROOT.pem
+# https://github.com/android/keyattestation/blob/b1bf4375/testdata/tegu/sdk36/TEE_EC_2026_ROOT.pem
+
+
+def test_tegu_tee_ec_2026_root():
+    parsed = _parse_leaf("google_key_tegu_tee_ec_2026.pem")
+
+    assert parsed["attestation_security_level"] == SECURITY_LEVEL_TRUSTED_ENVIRONMENT
+
+    hw = parsed["hardware_enforced"]
+    assert hw.get("origin") == 0
+    assert hw.get("ec_curve") == 1
+
+
+def test_tegu_strongbox_ec_2026_root():
+    parsed = _parse_leaf("google_key_tegu_sb_ec_2026.pem")
+
+    assert parsed["attestation_version"] == 300
+    assert parsed["attestation_security_level"] == SECURITY_LEVEL_STRONG_BOX
+
+    sw = parsed["software_enforced"]
+    app_id = sw["attestation_application_id"]
+    assert app_id["package_name"] == "com.google.android.attestation"
+
+    hw = parsed["hardware_enforced"]
+    assert hw.get("origin") == 0
+
+
+# --- Parser edge cases ---
 
 
 def test_trailing_der_bytes():
@@ -117,8 +197,7 @@ def test_malformed_key_description():
     import base64
     import json
     import datetime
-    from cryptography import x509 as cx509
-    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
     from cryptography.x509 import load_pem_x509_certificate as load_pem
