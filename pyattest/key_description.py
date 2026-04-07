@@ -420,19 +420,28 @@ def parse_attestation_application_id(app_id_bytes: bytes) -> dict:
         ) from e
 
     parsed = {}
+    packages = []
     package_infos_set = app_id_obj.getComponentByName("packageInfos")
     if package_infos_set.isValue and len(package_infos_set) > 0:
         for item in package_infos_set:
             if isinstance(item, AttestationPackageInfo):
+                pkg = {}
                 pkg_name = item.getComponentByName("packageName")
                 pkg_version = item.getComponentByName("version")
                 if pkg_name is not None and pkg_name.isValue:
-                    parsed["package_name"] = bytes(pkg_name).decode("utf-8")
+                    pkg["package_name"] = bytes(pkg_name).decode("utf-8")
                 if pkg_version is not None and pkg_version.isValue:
-                    parsed["version"] = int(pkg_version)
-                break  # Take the first package info
+                    pkg["version"] = int(pkg_version)
+                if pkg:
+                    packages.append(pkg)
     else:
         logger.debug("AttestationApplicationId has no package infos")
+
+    # Backwards-compatible: keep package_name/version from first entry
+    if packages:
+        parsed["package_name"] = packages[0].get("package_name")
+        parsed["version"] = packages[0].get("version")
+    parsed["packages"] = packages
 
     signatures = []
     sig_digests_set = app_id_obj.getComponentByName("signatureDigests")

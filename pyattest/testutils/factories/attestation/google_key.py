@@ -40,7 +40,9 @@ from pyattest.key_description import (
 from pyattest.testutils.factories.certificates import key_usage
 
 
-def _build_attestation_app_id_der(package_name: str) -> bytes:
+def _build_attestation_app_id_der(
+    package_name: str, signature_digest: bytes = None
+) -> bytes:
     """Build DER-encoded AttestationApplicationId with the given package name."""
     pkg_info = AttestationPackageInfo()
     pkg_info.setComponentByName("packageName", univ.OctetString(package_name.encode("utf-8")))
@@ -50,7 +52,7 @@ def _build_attestation_app_id_der(package_name: str) -> bytes:
     pkg_set.setComponentByPosition(0, pkg_info)
 
     sig_set = univ.SetOf(componentType=univ.OctetString())
-    sig_set.setComponentByPosition(0, univ.OctetString(os.urandom(32)))
+    sig_set.setComponentByPosition(0, univ.OctetString(signature_digest or os.urandom(32)))
 
     app_id = AttestationApplicationIdSchema()
     app_id.setComponentByName("packageInfos", pkg_set)
@@ -63,6 +65,8 @@ def _build_key_description_der(
     challenge: bytes,
     security_level: int = SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
     package_name: str = None,
+    origin: int = 0,
+    signature_digest: bytes = None,
 ) -> bytes:
     """Build DER-encoded KeyDescription extension value."""
     key_desc = KeyDescriptionSequence()
@@ -75,7 +79,7 @@ def _build_key_description_der(
 
     sw_enforced = AuthorizationList()
     if package_name:
-        app_id_der = _build_attestation_app_id_der(package_name)
+        app_id_der = _build_attestation_app_id_der(package_name, signature_digest)
         # Get the schema-defined component type to preserve tags
         comp_type = sw_enforced.getComponentType()["attestationApplicationId"].getType()
         sw_enforced.setComponentByName(
@@ -87,9 +91,9 @@ def _build_key_description_der(
     no_auth_type = hw_enforced.getComponentType()["noAuthRequired"].getType()
     hw_enforced.setComponentByName("noAuthRequired", no_auth_type.clone(value=b""))
 
-    # Set origin = GENERATED (0)
+    # Set origin
     origin_type = hw_enforced.getComponentType()["origin"].getType()
-    hw_enforced.setComponentByName("origin", origin_type.clone(value=0))
+    hw_enforced.setComponentByName("origin", origin_type.clone(value=origin))
 
     # Set purpose = SIGN (2)
     purpose_set = hw_enforced.getComponentType()["purpose"].getType().clone()
@@ -106,6 +110,8 @@ def get(
     apk_package_name: str,
     nonce: bytes,
     security_level: int = SECURITY_LEVEL_TRUSTED_ENVIRONMENT,
+    origin: int = 0,
+    signature_digest: bytes = None,
 ):
     """
     Create a fake Android Key Attestation certificate chain.
@@ -130,6 +136,8 @@ def get(
         challenge=nonce,
         security_level=security_level,
         package_name=apk_package_name,
+        origin=origin,
+        signature_digest=signature_digest,
     )
 
     # Create leaf certificate with the attestation extension

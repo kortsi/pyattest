@@ -39,8 +39,15 @@ def fetch_google_key_attestation_roots(
         )
     """
     # Fetch from Google's endpoint
-    resp = urllib.request.urlopen(url)
-    pem_strings = json.loads(resp.read())
+    try:
+        resp = urllib.request.urlopen(url, timeout=10)
+        pem_strings = json.loads(resp.read())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch root certificates from {url}: {e}") from e
+
+    if not isinstance(pem_strings, list):
+        raise RuntimeError(f"Unexpected response format from {url}: expected JSON array")
+
     fetched = [_load_certificate(p.encode()) for p in pem_strings]
 
     # Load bundled roots
@@ -68,7 +75,8 @@ def fetch_google_revocation_list(
     """
     Fetch Google's certificate revocation status list.
 
-    Returns a set of revoked certificate serial numbers (as integers).
+    Returns a set of revoked certificate serial numbers as hex strings
+    (without 0x prefix), matching Google's API format.
 
     See: https://developer.android.com/privacy-and-security/security-key-attestation#certificate_status
 
@@ -83,12 +91,20 @@ def fetch_google_revocation_list(
             revoked_serials=revoked,
         )
     """
-    resp = urllib.request.urlopen(url)
-    data = json.loads(resp.read())
-    entries = data.get("entries", {})
-    # Serial numbers in Google's API are hex strings without 0x prefix
+    try:
+        resp = urllib.request.urlopen(url, timeout=10)
+        data = json.loads(resp.read())
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch revocation list from {url}: {e}") from e
+
+    entries = data.get("entries")
+    if not isinstance(entries, dict):
+        raise RuntimeError(f"Unexpected response format from {url}: missing 'entries' dict")
+
+    # Serial numbers in Google's API are hex strings without 0x prefix.
+    # Lookup in the verifier uses format(cert.serial_number, "x").
     return {
         serial
         for serial, info in entries.items()
-        if info.get("status") == "REVOKED"
+        if isinstance(info, dict) and info.get("status") == "REVOKED"
     }

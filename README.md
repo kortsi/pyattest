@@ -85,9 +85,10 @@ or account details. For full device integrity assurance, combine both.
 The following parameters are important:
 
 - `apk_package_name`: Name of your apk package (verified in production mode from the KeyDescription extension)
-- `production`: Set to `True` to enforce package name verification
-- `root_cas`: Optional custom root CA bytes for testing (defaults to bundled Google hardware attestation roots)
-- `revoked_serials`: Optional set of revoked certificate serial numbers (defaults to empty set)
+- `production`: Set to `True` to enforce package name and signature digest verification
+- `root_cas`: Optional list of custom root CA certificates (defaults to bundled Google hardware attestation roots)
+- `revoked_serials`: Optional set of revoked certificate serial numbers as hex strings (defaults to empty, skipping revocation checks)
+- `apk_signature_digests`: Optional list of expected APK signing certificate SHA-256 digests as hex strings. Prevents a repackaged APK with the same package name from passing verification. Obtain via `./gradlew signingReport`.
 - `attest`: A JSON array of base64-encoded DER certificates (leaf first, root last)
 - `nonce`: Server-generated random bytes for freshness verification (passed to `setAttestationChallenge()` on Android)
 
@@ -126,11 +127,13 @@ print(data["attestation_version"])  # e.g. 300 or 400
 ```
 
 The verifier checks:
-1. Certificate chain validates against Google's bundled hardware attestation root CAs (or custom roots if provided)
-2. Certificates not on Google's revocation list (if `revoked_serials` given)
-3. Attestation challenge matches the expected nonce
-4. Security level is TEE or StrongBox (software-backed keys are rejected)
-5. Package name matches (production mode only)
+1. Certificate chain validates against Google's bundled hardware attestation root CAs (or custom roots)
+2. Certificates not on Google's revocation list (if `revoked_serials` configured)
+3. Key was generated on-device, not imported (always enforced)
+4. Attestation challenge matches the expected nonce
+5. Both attestation and KeyMint security levels are TEE or StrongBox (not Software)
+6. Package name matches (production mode only)
+7. APK signature digests match (production mode, if `apk_signature_digests` configured)
 
 To keep root CAs up to date and check for revoked certificates, use the fetch utilities:
 

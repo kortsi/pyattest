@@ -252,6 +252,152 @@ def test_revocation_not_checked_when_empty():
     attestation.verify()  # Should not raise
 
 
+# --- Key origin tests ---
+
+
+def test_generated_key_passes():
+    """Key with origin=0 (Generated) should pass."""
+    attest, _ = factory.get(
+        apk_package_name="com.example.app", nonce=nonce, origin=0
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest, nonce, config)
+    attestation.verify()  # Should not raise
+
+
+def test_imported_key_rejected():
+    """Key with origin=1 (Imported) should be rejected."""
+    attest, _ = factory.get(
+        apk_package_name="com.example.app", nonce=nonce, origin=1
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest, nonce, config)
+    with raises(InvalidSecurityLevelException):
+        attestation.verify()
+
+
+def test_derived_key_rejected():
+    """Key with origin=2 (Derived) should be rejected."""
+    attest, _ = factory.get(
+        apk_package_name="com.example.app", nonce=nonce, origin=2
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest, nonce, config)
+    with raises(InvalidSecurityLevelException):
+        attestation.verify()
+
+
+def test_securely_imported_key_rejected():
+    """Key with origin=4 (Securely Imported) should be rejected."""
+    attest, _ = factory.get(
+        apk_package_name="com.example.app", nonce=nonce, origin=4
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest, nonce, config)
+    with raises(InvalidSecurityLevelException):
+        attestation.verify()
+
+
+# --- APK signature digest tests ---
+
+
+def test_signature_digest_match():
+    """Matching signature digest should pass."""
+    known_digest = bytes.fromhex("abcdef1234567890" * 4)
+    attest, _ = factory.get(
+        apk_package_name="com.example.app",
+        nonce=nonce,
+        signature_digest=known_digest,
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=True,
+        apk_signature_digests=[known_digest.hex()],
+    )
+    attestation = Attestation(attest, nonce, config)
+    attestation.verify()  # Should not raise
+
+
+def test_signature_digest_mismatch():
+    """Wrong signature digest should be rejected."""
+    known_digest = bytes.fromhex("abcdef1234567890" * 4)
+    attest, _ = factory.get(
+        apk_package_name="com.example.app",
+        nonce=nonce,
+        signature_digest=known_digest,
+    )
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=True,
+        apk_signature_digests=["0000000000000000" * 4],
+    )
+    attestation = Attestation(attest, nonce, config)
+    with raises(InvalidAppIdException):
+        attestation.verify()
+
+
+def test_signature_digest_not_checked_when_not_configured():
+    """When apk_signature_digests is None, any digest should pass."""
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=True,
+        apk_signature_digests=None,
+    )
+    attestation = Attestation(attest, nonce, config)
+    attestation.verify()  # Should not raise
+
+
+# --- App identity tests ---
+
+
+def test_parse_all_packages():
+    """Parser should return all packages, not just the first."""
+    from pyattest.key_description import parse_key_description
+    # Real device cert has one package — verify the packages list structure
+    pem_path = Path("pyattest/testutils/fixtures/google_key_tee_ec.pem")
+    pem_data = pem_path.read_bytes()
+    from cryptography.x509 import load_pem_x509_certificate
+    from cryptography import x509 as cx509
+
+    certs = []
+    current = b""
+    for line in pem_data.split(b"\n"):
+        current += line + b"\n"
+        if b"END CERTIFICATE" in line:
+            certs.append(current)
+            current = b""
+
+    leaf = load_pem_x509_certificate(certs[0])
+    oid = cx509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
+    ext = leaf.extensions.get_extension_for_oid(oid)
+    parsed = parse_key_description(ext.value.value)
+
+    app_id = parsed["software_enforced"]["attestation_application_id"]
+    assert "packages" in app_id
+    assert len(app_id["packages"]) >= 1
+    assert app_id["packages"][0]["package_name"] == app_id["package_name"]
+
+
 # --- Adversarial input tests ---
 
 
