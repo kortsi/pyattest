@@ -398,6 +398,115 @@ def test_parse_all_packages():
     assert app_id["packages"][0]["package_name"] == app_id["package_name"]
 
 
+# --- Fetch utility tests (mocked network) ---
+
+
+def test_fetch_roots_merges_and_deduplicates():
+    """fetch_google_key_attestation_roots should merge fetched + bundled and deduplicate."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+    import json
+
+    # Read one bundled cert to use as the "fetched" response (will be deduped)
+    bundled_pem = Path("pyattest/certificates/google_hardware_attestation_root_rsa_2022.pem").read_text()
+    fake_response = MagicMock()
+    fake_response.read.return_value = json.dumps([bundled_pem]).encode()
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        roots = fetch_google_key_attestation_roots()
+
+    # Should have all 5 bundled roots, not 6 (the fetched one is a duplicate)
+    assert len(roots) == 5
+
+
+def test_fetch_roots_bad_json():
+    """fetch_google_key_attestation_roots should raise on non-JSON response."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+
+    fake_response = MagicMock()
+    fake_response.read.return_value = b"not json"
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        with raises(RuntimeError, match="Failed to fetch"):
+            fetch_google_key_attestation_roots()
+
+
+def test_fetch_roots_not_array():
+    """fetch_google_key_attestation_roots should raise if response is not a JSON array."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_key_attestation_roots
+    import json
+
+    fake_response = MagicMock()
+    fake_response.read.return_value = json.dumps({"not": "an array"}).encode()
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        with raises(RuntimeError, match="expected JSON array"):
+            fetch_google_key_attestation_roots()
+
+
+def test_fetch_revocation_list():
+    """fetch_google_revocation_list should return revoked serials as hex strings."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_revocation_list
+    import json
+
+    fake_data = {
+        "entries": {
+            "abcdef1234": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
+            "1234567890": {"status": "REVOKED", "reason": "KEY_COMPROMISE"},
+            "fedcba9876": {"status": "SUSPENDED"},
+        }
+    }
+    fake_response = MagicMock()
+    fake_response.read.return_value = json.dumps(fake_data).encode()
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        revoked = fetch_google_revocation_list()
+
+    assert revoked == {"abcdef1234", "1234567890"}
+    assert "fedcba9876" not in revoked  # SUSPENDED, not REVOKED
+
+
+def test_fetch_revocation_bad_json():
+    """fetch_google_revocation_list should raise on non-JSON response."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_revocation_list
+
+    fake_response = MagicMock()
+    fake_response.read.return_value = b"not json"
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        with raises(RuntimeError, match="Failed to fetch"):
+            fetch_google_revocation_list()
+
+
+def test_fetch_revocation_missing_entries():
+    """fetch_google_revocation_list should raise if 'entries' key is missing."""
+    from unittest.mock import patch, MagicMock
+    from pyattest.verifiers.utils import fetch_google_revocation_list
+    import json
+
+    fake_response = MagicMock()
+    fake_response.read.return_value = json.dumps({"no_entries": {}}).encode()
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", return_value=fake_response):
+        with raises(RuntimeError, match="missing 'entries'"):
+            fetch_google_revocation_list()
+
+
+def test_fetch_revocation_timeout():
+    """fetch_google_revocation_list should raise on network timeout."""
+    from unittest.mock import patch
+    from pyattest.verifiers.utils import fetch_google_revocation_list
+    import urllib.error
+
+    with patch("pyattest.verifiers.utils.urllib.request.urlopen", side_effect=urllib.error.URLError("timeout")):
+        with raises(RuntimeError, match="Failed to fetch"):
+            fetch_google_revocation_list()
+
+
 # --- Adversarial input tests ---
 
 
@@ -452,6 +561,97 @@ def test_truncated_der():
     truncated = json.dumps([base64.b64encode(b"\x30\x82\x00\x10" + b"\x00" * 8).decode()])
     attestation = Attestation(truncated, nonce, config)
     with raises((InvalidCertificateChainException, PyAttestException, ValueError)):
+        attestation.verify()
+
+
+def test_bytes_input():
+    """Attestation data passed as bytes should work."""
+    attest, _ = factory.get(apk_package_name="com.example.app", nonce=nonce)
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(attest.encode("utf-8"), nonce, config)
+    attestation.verify()
+
+
+def test_chain_too_long():
+    """Certificate chain with more than 10 certs should be rejected."""
+    import json
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    long_chain = json.dumps(["AAAA"] * 11)
+    attestation = Attestation(long_chain, nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_json_object_not_array():
+    """JSON object instead of array should be rejected."""
+    import json
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(json.dumps({"not": "an array"}), nonce, config)
+    with raises(InvalidCertificateChainException):
+        attestation.verify()
+
+
+def test_malformed_key_description():
+    """Malformed DER that isn't a valid KeyDescription should raise PyAttestException."""
+    import base64
+    import json
+    from cryptography import x509 as cx509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    import datetime
+
+    # Build a cert with a bogus attestation extension
+    leaf_key = ec.generate_private_key(ec.SECP256R1())
+    root_key_bytes = Path("pyattest/testutils/fixtures/root_key.pem").read_bytes()
+    root_cert_bytes = Path("pyattest/testutils/fixtures/root_cert.pem").read_bytes()
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    from cryptography.x509 import load_pem_x509_certificate as load_pem
+    rk = load_pem_private_key(root_key_bytes, b"123")
+    rc = load_pem(root_cert_bytes)
+
+    cert = (
+        cx509.CertificateBuilder()
+        .subject_name(cx509.Name([cx509.NameAttribute(NameOID.COMMON_NAME, "Test")]))
+        .issuer_name(rc.subject)
+        .public_key(leaf_key.public_key())
+        .serial_number(cx509.random_serial_number())
+        .not_valid_before(datetime.datetime.utcnow())
+        .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=1))
+        .add_extension(
+            cx509.UnrecognizedExtension(
+                cx509.ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17"),
+                b"\x30\x03\x01\x01\xff",  # bogus DER
+            ),
+            critical=False,
+        )
+        .sign(rk, hashes.SHA256())
+    )
+
+    chain = json.dumps([
+        base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode(),
+        base64.b64encode(rc.public_bytes(serialization.Encoding.DER)).decode(),
+    ])
+
+    config = GoogleKeyAttestationConfig(
+        apk_package_name="com.example.app",
+        root_ca=root_ca_pem,
+        production=False,
+    )
+    attestation = Attestation(chain, nonce, config)
+    with raises(PyAttestException):
         attestation.verify()
 
 
